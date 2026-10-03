@@ -2,26 +2,25 @@
 # debug package is disabled.
 %global debug_package %{nil}
 
-# Disable generation of build-id symlinks under /usr/lib/.build-id
-# Prevents "Installed (but unpackaged) file(s) found" error in mock chroot
+# Disable generation of build-id symlinks
 %global _build_id_links none
 %undefine _missing_build_ids_terminate_build
 
-# NOTE: %%global debug_package %%{nil} makes the default ELF-rewriting brp hooks run.
+# NOTE: %%global debug_package %%{nil} makes default ELF-rewriting brp hooks run.
 # Empty all four hooks to keep the prebuilt payload byte-identical to upstream.
 %global __brp_strip %{nil}
 %global __brp_strip_comment_note %{nil}
 %global __brp_strip_lto %{nil}
 %global __brp_strip_static_archive %{nil}
 
-# add-determinism would regenerate build-id links and mutate the foreign binary.
+# add-determinism would mutate the foreign binary.
 %undefine __brp_add_determinism
 
 # Filter internal Electron shared libraries:
 # 1. Prevent bundled private libs from leaking into system RPM provides
 # 2. Prevent bundled libffmpeg.so from triggering a broken system DT_NEEDED requirement
 %global __provides_exclude_from ^/opt/ExifCleaner/.*$
-%global __requires_exclude ^libffmpeg\\.so
+%global __requires_exclude ^(libffmpeg\\.so.*)$
 
 Name:           exifcleaner
 Version:        4.5.0
@@ -85,6 +84,10 @@ mkdir -p %{buildroot}
 cp -a opt %{buildroot}/
 cp -a usr %{buildroot}/
 
+# Upstream RPM bundles foreign /usr/lib/.build-id symlinks from its build environment.
+# Remove /usr/lib completely to prevent "Installed (but unpackaged) file(s) found" error:
+rm -rf %{buildroot}/usr/lib
+
 # Install curated AppStream metadata
 install -Dm0644 %{SOURCE2} %{buildroot}%{_metainfodir}/com.exifcleaner.exifcleaner.metainfo.xml
 
@@ -113,5 +116,5 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/com.exifcleaner.exifc
 %changelog
 * Sat Oct 03 2026 Saffet Yavuz <saffet@example.com> - 4.5.0-1
 - Initial repackaging of upstream ExifCleaner prebuilt RPM for Fedora COPR
-- Disable build-id symlinks to prevent unpackaged files error
+- Remove foreign build-id symlinks from upstream payload
 - Filter bundled libffmpeg.so from DT_NEEDED dependencies
