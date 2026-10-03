@@ -1,0 +1,195 @@
+# Publish ExifCleaner prebuilt RPM to Fedora COPR
+name: ExifCleaner Fedora COPR CI
+
+on:
+  schedule:
+    - cron: "0 00 * * *"
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force a COPR rebuild even if the version is unchanged"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  COPR_PROJECT: ExifCleaner..
+  COPR_USERNAME: universish
+  COPR_URL: https://copr.fedorainfracloud.org
+  REPO_DEV: szTheory
+  REPO_NAME: exifcleaner
+  PACKAGE_NAME: exifcleaner
+
+jobs:
+  GetLatestVersion:
+    runs-on: ubuntu-latest
+    outputs:
+      VERSION: ${{ steps.step_version.outputs.VERSION }}
+    steps:
+      - name: Install jq
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+      - name: Get latest version
+        id: step_version
+        run: |
+          latest_release_tag=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO_DEV/$REPO_NAME/releases/latest | jq -r '.tag_name // empty')
+          if [ -z "$latest_release_tag" ]; then echo "ERROR: tag empty"; exit 1; fi
+          echo "VERSION=$latest_release_tag" >> "$GITHUB_OUTPUT"
+
+  UpdateFedoraCOPR:
+    needs: GetLatestVersion
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - name: Install git
+        run: dnf install -y -q git
+      - name: Checkout local
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install dependencies
+        run: |
+          dnf install -y -q copr-cli python3 git gawk jq curl rpm-build \
+            binutils cpio chrpath rpmdevtools desktop-file-utils appstream
+      - name: Patch spec and metainfo version
+        run: |
+          version_no_v=$(echo "${{ needs.GetLatestVersion.outputs.VERSION }}" | sed 's/^v//')
+          sed -i "s/^Version:.*/Version:        ${version_no_v}/" specs/exifcleaner.spec
+          if [ -f sources/com.exifcleaner.exifcleaner.metainfo.xml ]; then
+            sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"${version_no_v}\" date=\"$(date +%F)\"|" sources/com.exifcleaner.exifcleaner.metainfo.xml
+          fi
+          head -15 specs/exifcleaner.spec
+      - name: Validate curated AppStream metadata
+        run: |
+          if [ -f sources/com.exifcleaner.exifcleaner.metainfo.xml ]; then
+            appstreamcli validate --no-net sources/com.exifcleaner.exifcleaner.metainfo.xml
+          fi
+      - name: Configure copr-cli
+        run: |
+          mkdir -p $HOME/.config
+          cat <<EOF > $HOME/.config/copr
+          [copr-cli]
+          login = ${{ secrets.COPR_BUILD_L }}
+          username = ${{ env.COPR_USERNAME }}
+          token = ${{ secrets.COPR_BUILD_T }}
+          copr_url = ${{ env.COPR_URL }}
+          EOF
+      - name: Decide whether to build
+        id: step_decide
+        run: |
+          set +e
+          rc=1
+          for attempt in 1 2 3 4 5; do
+            response=$(curl -fsS --http1.1 --connect-timeout 15 --max-time 60 -w '\n%{http_code}' \
+              "https://copr.fedorainfracloud.org/api_3/build/list?ownername=${{ env.COPR_USERNAME }}&projectname=${{ env.COPR_PROJECT }}&packagename=${{ env.PACKAGE_NAME }}")
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+              break
+            fi
+            echo "COPR API query attempt $attempt/5 failed (curl rc=$rc), retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "ERROR: COPR API query failed after 5 attempts (last curl rc=$rc)"
+            exit 1
+          fi
+          http_code=$(printf '%s\n' "$response" | tail -1)
+          body=$(printf '%s\n' "$response" | sed '$d')
+          if [ "$http_code" != "200" ]; then
+            echo "ERROR: COPR API returned HTTP $http_code"
+            exit 1
+          fi
+          LATEST_COPR=$(printf '%s\n' "$body" | jq -r '[.items | sort_by(.id) | reverse[] | select(.state == "succeeded") | .source_package.version] | first // empty')
+          cutoff=$(( $(date +%s) - 21600 ))
+          INFLIGHT_COPR=$(printf '%s\n' "$body" | jq -r --argjson cutoff "$cutoff" '
+            .items[]
+            | select(.state != "succeeded" and .state != "skipped" and .state != "failed" and .state != "canceled")
+            | select(.submitted_on > $cutoff)
+            | .source_package.version')
+          NEW_TAG="${{ needs.GetLatestVersion.outputs.VERSION }}"
+          git_version=$(echo "$NEW_TAG" | sed 's/^v//')
+          SKIP_INFLIGHT=false
+          for inflight in $INFLIGHT_COPR; do
+            set +e
+            rpmdev-vercmp "$inflight" "$git_version"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 12 ]; then
+              echo "COPR build $inflight is still in flight — $git_version is already queued, skipping"
+              SKIP_INFLIGHT=true
+              break
+            fi
+          done
+          if [ "${{ inputs.force_build }}" = "true" ]; then
+            echo "Force rebuild requested (input force_build=true)"
+            echo "START_BUILD=true" >> "$GITHUB_ENV"
+          elif [ "$SKIP_INFLIGHT" = "true" ]; then
+            echo "START_BUILD=false" >> "$GITHUB_ENV"
+          elif [ -z "$LATEST_COPR" ]; then
+            echo "No succeeded COPR build yet — triggering first build"
+            echo "START_BUILD=true" >> "$GITHUB_ENV"
+          else
+            echo "Latest COPR = $LATEST_COPR ; new tag = $NEW_TAG"
+            set +e
+            rpmdev-vercmp "$LATEST_COPR" "$git_version"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 12 ]; then
+              echo "START_BUILD=true" >> "$GITHUB_ENV"
+            else
+              echo "START_BUILD=false" >> "$GITHUB_ENV"
+            fi
+          fi
+      - name: Build SRPM and submit to COPR
+        if: env.START_BUILD == 'true'
+        env:
+          VERSION: ${{ needs.GetLatestVersion.outputs.VERSION }}
+        run: |
+          rpmdev-setuptree
+          VERSION_NO_V=$(echo "$VERSION" | sed 's/^v//')
+          if [ "${{ inputs.force_build }}" = "true" ]; then
+            sed -i "s/^Release:.*/Release:        %{autorelease}.f${{ github.run_id }}/" specs/exifcleaner.spec
+          fi
+          if [ -f sources/com.exifcleaner.exifcleaner.metainfo.xml ]; then
+            cp sources/com.exifcleaner.exifcleaner.metainfo.xml $HOME/rpmbuild/SOURCES/
+          fi
+          cp specs/exifcleaner.spec $HOME/rpmbuild/SPECS/
+          cd $HOME/rpmbuild/SPECS
+          spectool -g -R exifcleaner.spec
+          RPM_PATH=$(ls "$HOME"/rpmbuild/SOURCES/exifcleaner-*.x86_64.rpm | head -1)
+          HASH=$(sha256sum "$RPM_PATH" | awk '{print $1}')
+          EXPECTED=$(awk -v v="$VERSION_NO_V" '$2==v {print $1}' "$GITHUB_WORKSPACE/sources/SHA256SUMS")
+          if [ -n "$EXPECTED" ]; then
+            if [ "$EXPECTED" != "$HASH" ]; then
+              echo "ERROR: checksum mismatch for exifcleaner $VERSION_NO_V"
+              echo "expected: $EXPECTED"
+              echo "actual:   $HASH"
+              exit 1
+            fi
+            echo "Checksum OK for $VERSION_NO_V"
+          else
+            echo "No recorded checksum for $VERSION_NO_V — recording (trust-on-first-use)"
+            WS="$GITHUB_WORKSPACE"
+            mkdir -p "$WS/sources"
+            touch "$WS/sources/SHA256SUMS"
+            header=$(grep '^#' "$WS/sources/SHA256SUMS" || true)
+            entries=$(grep -v '^#' "$WS/sources/SHA256SUMS" | grep -v '^$' || true)
+            new_entries=$(printf '%s\n%s  %s\n' "$entries" "$HASH" "$VERSION_NO_V" | grep -v '^$' | tail -n 3)
+            printf '%s\n\n%s\n' "$header" "$new_entries" > "$WS/sources/SHA256SUMS"
+            git -C "$WS" config user.name "github-actions[bot]"
+            git -C "$WS" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C "$WS" add sources/SHA256SUMS
+            git -C "$WS" commit -m "ci: record checksum for exifcleaner $VERSION_NO_V"
+            git -C "$WS" pull --rebase --autostash origin "$(git -C "$WS" branch --show-current)" || true
+            git -C "$WS" push
+          fi
+          rpmbuild -bs exifcleaner.spec
+          SRPM=$(ls $HOME/rpmbuild/SRPMS/exifcleaner-*.src.rpm | head -1)
+          echo "Submitting $SRPM to COPR"
+          copr-cli build --nowait ${{ env.COPR_PROJECT }} "$SRPM"
