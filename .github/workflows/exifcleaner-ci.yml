@@ -21,6 +21,7 @@ env:
   REPO_DEV: szTheory
   REPO_NAME: exifcleaner
   PACKAGE_NAME: exifcleaner
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   GetLatestVersion:
