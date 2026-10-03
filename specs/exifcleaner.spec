@@ -83,7 +83,7 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_metainfodir}/com.exifcleaner.exifclean
 install -d %{buildroot}%{_bindir}
 cat << 'EOF' > %{buildroot}%{_bindir}/exifcleaner
 #!/bin/bash
-FLAGS="--ozone-platform=wayland --disable-vulkan --disable-features=Vulkan"
+FLAGS="--ozone-platform=wayland --disable-vulkan --disable-features=Vulkan --use-gl=angle --use-angle=gl"
 
 # GNOME / GTK sistem temasını kontrol et
 COLOR_SCHEME=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'\"")
@@ -119,7 +119,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/com.exifcleaner.exifc
 %{_metainfodir}/com.exifcleaner.exifcleaner.metainfo.xml
 
 %changelog
-* Sat Oct 03 2026 Saffet Yavuz <saffet.yavuz@tutamail.com> - 4.5.0-3
+* Sat Oct 03 2026 Saffet Yavuz <saffet.yavuz@tutamail.com> - 4.5.0-4
 - Add dynamic dark mode detection to wayland wrapper
 - Clean invalid build-id symlinks from upstream payload
 - Filter bundled libffmpeg.so from DT_NEEDED dependencies
