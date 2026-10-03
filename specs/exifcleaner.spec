@@ -1,6 +1,11 @@
 # Prebuilt foreign binary: no build-id or debuginfo can be produced, so the
-# debug package is disabled. The payload ships as-is from the release RPM.
+# debug package is disabled.
 %global debug_package %{nil}
+
+# Disable generation of build-id symlinks under /usr/lib/.build-id
+# Prevents "Installed (but unpackaged) file(s) found" error in mock chroot
+%global _build_id_links none
+%undefine _missing_build_ids_terminate_build
 
 # NOTE: %%global debug_package %%{nil} makes the default ELF-rewriting brp hooks run.
 # Empty all four hooks to keep the prebuilt payload byte-identical to upstream.
@@ -12,8 +17,11 @@
 # add-determinism would regenerate build-id links and mutate the foreign binary.
 %undefine __brp_add_determinism
 
-# Filter internal Electron shared libraries from leaking into RPM provides.
+# Filter internal Electron shared libraries:
+# 1. Prevent bundled private libs from leaking into system RPM provides
+# 2. Prevent bundled libffmpeg.so from triggering a broken system DT_NEEDED requirement
 %global __provides_exclude_from ^/opt/ExifCleaner/.*$
+%global __requires_exclude ^libffmpeg\\.so
 
 Name:           exifcleaner
 Version:        4.5.0
@@ -105,5 +113,5 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/com.exifcleaner.exifc
 %changelog
 * Sat Oct 03 2026 Saffet Yavuz <saffet@example.com> - 4.5.0-1
 - Initial repackaging of upstream ExifCleaner prebuilt RPM for Fedora COPR
-- Unset ELF-rewriting brp hooks to preserve foreign binary integrity
-- Exclude internal Electron libraries from RPM provides
+- Disable build-id symlinks to prevent unpackaged files error
+- Filter bundled libffmpeg.so from DT_NEEDED dependencies
