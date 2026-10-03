@@ -79,11 +79,22 @@ rm -rf %{buildroot}/usr/lib
 
 install -Dm0644 %{SOURCE2} %{buildroot}%{_metainfodir}/com.exifcleaner.exifcleaner.metainfo.xml
 
-# Çalıştırma bayraklarını sabitleyen wrapper betik
+# Çalıştırma bayraklarını ve dinamik tema kontrolünü sağlayan wrapper betik
 install -d %{buildroot}%{_bindir}
 cat << 'EOF' > %{buildroot}%{_bindir}/exifcleaner
 #!/bin/bash
-exec /opt/ExifCleaner/exifcleaner --ozone-platform=wayland --disable-vulkan "$@"
+FLAGS="--ozone-platform=wayland --disable-vulkan --disable-features=Vulkan"
+
+# GNOME / GTK sistem temasını kontrol et
+COLOR_SCHEME=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'\"")
+GTK_THEME=$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'\"")
+
+# Sistem koyu moddaysa Electron'a koyu temayı bildir
+if [ "$COLOR_SCHEME" = "prefer-dark" ] || [[ "$GTK_THEME" =~ [Dd]ark ]]; then
+    FLAGS="$FLAGS --force-dark-mode"
+fi
+
+exec /opt/ExifCleaner/exifcleaner $FLAGS "$@"
 EOF
 chmod 0755 %{buildroot}%{_bindir}/exifcleaner
 
@@ -108,7 +119,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/com.exifcleaner.exifc
 %{_metainfodir}/com.exifcleaner.exifcleaner.metainfo.xml
 
 %changelog
-* Sat Oct 03 2026 Saffet Yavuz <saffet.yavuz@tutamail.com> - 4.5.0-2
-- Add Wayland ozone and disable-vulkan wrapper for proper UI rendering
-- Remove foreign build-id symlinks from upstream payload
+* Sat Oct 03 2026 Saffet Yavuz <saffet.yavuz@tutamail.com> - 4.5.0-3
+- Add dynamic dark mode detection to wayland wrapper
+- Clean invalid build-id symlinks from upstream payload
 - Filter bundled libffmpeg.so from DT_NEEDED dependencies
