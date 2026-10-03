@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.exifcleaner.exifcleaner</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>ExifCleaner</name>
+  <summary>Clean image, video, and PDF metadata</summary>
+  <description>
+    <p>
+      ExifCleaner is a cross-platform desktop GUI application that cleans metadata
+      from images, videos, PDFs, and other files with batch processing and drag-and-drop support.
+    </p>
+  </description>
+  <launchable type="desktop-id">exifcleaner.desktop</launchable>
+  <url type="homepage">https://exifcleaner.com</url>
+  <url type="bugtracker">https://github.com/szTheory/exifcleaner/issues</url>
+  <provides>
+    <binary>exifcleaner</binary>
+  </provides>
+  <releases>
+    <release version="4.5.0" date="2026-10-03"/>
+  </releases>
+</component>
