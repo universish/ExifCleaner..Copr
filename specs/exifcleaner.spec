@@ -6,19 +6,16 @@
 %global _build_id_links none
 %undefine _missing_build_ids_terminate_build
 
-# NOTE: %%global debug_package %%{nil} makes default ELF-rewriting brp hooks run.
-# Empty all four hooks to keep the prebuilt payload byte-identical to upstream.
+# Empty all four hooks to keep the prebuilt payload byte-identical to upstream
 %global __brp_strip %{nil}
 %global __brp_strip_comment_note %{nil}
 %global __brp_strip_lto %{nil}
 %global __brp_strip_static_archive %{nil}
 
-# add-determinism would mutate the foreign binary.
+# add-determinism would mutate the foreign binary
 %undefine __brp_add_determinism
 
-# Filter internal Electron shared libraries:
-# 1. Prevent bundled private libs from leaking into system RPM provides
-# 2. Prevent bundled libffmpeg.so from triggering a broken system DT_NEEDED requirement
+# Filter internal Electron shared libraries
 %global __provides_exclude_from ^/opt/ExifCleaner/.*$
 %global __requires_exclude ^(libffmpeg\\.so.*)$
 
@@ -30,11 +27,8 @@ License:        MIT
 URL:            https://github.com/szTheory/exifcleaner
 ExclusiveArch:  x86_64
 
-# Upstream prebuilt x86_64 RPM is fetched directly by spectool.
 Source0:        https://github.com/szTheory/exifcleaner/releases/download/v%{version}/exifcleaner-%{version}.x86_64.rpm
-# Upstream prebuilt RPM does not bundle the root LICENSE file. Fetch it from the release tag:
 Source1:        https://raw.githubusercontent.com/szTheory/exifcleaner/v%{version}/LICENSE
-# Curated AppStream metadata
 Source2:        com.exifcleaner.exifcleaner.metainfo.xml
 
 BuildRequires:  cpio
@@ -43,7 +37,6 @@ BuildRequires:  appstream
 BuildRequires:  binutils
 BuildRequires:  chrpath
 
-# Runtime dependencies required by the Electron framework and desktop environment:
 Requires:       hicolor-icon-theme
 Requires:       xdg-utils
 Requires:       gtk3
@@ -59,10 +52,8 @@ This package rewraps the upstream prebuilt x86_64 Linux RPM for Fedora (COPR onl
 
 %prep
 %setup -c -T
-# Extract the upstream RPM payload
 rpm2cpio %{SOURCE0} | cpio -idmv
 
-# Clean invalid build workspace RUNPATH entries if left by electron-builder
 for bin in opt/ExifCleaner/exifcleaner opt/ExifCleaner/*.so; do
   if [ -f "$bin" ]; then
     if readelf -d "$bin" 2>/dev/null | grep -Eq 'RUNPATH.*(/home/runner|/tmp)'; then
@@ -74,28 +65,31 @@ done
 cp %{SOURCE1} LICENSE
 
 %build
-# Nothing to compile: upstream prebuilt payload was extracted in %%prep.
+# Nothing to compile
 
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}
 
-# Copy extracted filesystem trees
 cp -a opt %{buildroot}/
 cp -a usr %{buildroot}/
 
-# Upstream RPM bundles foreign /usr/lib/.build-id symlinks from its build environment.
-# Remove /usr/lib completely to prevent "Installed (but unpackaged) file(s) found" error:
+# Yabancı build-id dizinini temizle
 rm -rf %{buildroot}/usr/lib
 
-# Install curated AppStream metadata
 install -Dm0644 %{SOURCE2} %{buildroot}%{_metainfodir}/com.exifcleaner.exifcleaner.metainfo.xml
 
-# Ensure /usr/bin symlink is owned by the package
+# Çalıştırma bayraklarını sabitleyen wrapper betik
 install -d %{buildroot}%{_bindir}
-ln -sf /opt/ExifCleaner/exifcleaner %{buildroot}%{_bindir}/exifcleaner
+cat << 'EOF' > %{buildroot}%{_bindir}/exifcleaner
+#!/bin/bash
+exec /opt/ExifCleaner/exifcleaner --ozone-platform=wayland --disable-vulkan "$@"
+EOF
+chmod 0755 %{buildroot}%{_bindir}/exifcleaner
 
-# Ensure executable permissions on main binary and sandbox
+# Menü kısayolunun wrapper betiği çalıştırmasını garantiye al
+sed -i 's|^Exec=.*|Exec=/usr/bin/exifcleaner %U|' %{buildroot}%{_datadir}/applications/exifcleaner.desktop
+
 chmod 0755 %{buildroot}/opt/ExifCleaner/exifcleaner
 if [ -f %{buildroot}/opt/ExifCleaner/chrome-sandbox ]; then
   chmod 4755 %{buildroot}/opt/ExifCleaner/chrome-sandbox || chmod 0755 %{buildroot}/opt/ExifCleaner/chrome-sandbox
@@ -114,7 +108,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/com.exifcleaner.exifc
 %{_metainfodir}/com.exifcleaner.exifcleaner.metainfo.xml
 
 %changelog
-* Sat Oct 03 2026 Saffet Yavuz <saffet@example.com> - 4.5.0-1
-- Initial repackaging of upstream ExifCleaner prebuilt RPM for Fedora COPR
+* Sat Oct 03 2026 Saffet Yavuz <saffet.yavuz@tutamail.com> - 4.5.0-2
+- Add Wayland ozone and disable-vulkan wrapper for proper UI rendering
 - Remove foreign build-id symlinks from upstream payload
 - Filter bundled libffmpeg.so from DT_NEEDED dependencies
